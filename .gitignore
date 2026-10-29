@@ -69,3 +69,7 @@ Testing/
 
 # !ignoring
 !go.mod
+# Model weights (keep folder layout only)
+models/**
+!models/**/
+!models/**/.gitkeep
