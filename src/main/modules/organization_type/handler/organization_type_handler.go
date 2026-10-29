@@ -22,6 +22,14 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/organization-types", h.list)
 }
 
+// list returns every organization type; the table is small, so there is no paging.
+//
+// @Summary      List organization types
+// @Description  Returns all organization types (ministry, agency, parliament, ...). Not paginated.
+// @Tags         organization-types
+// @Produce      json
+// @Success      200  {object}  infrastructure.ListResponse[dto.OrganizationTypeResponse]
+// @Router       /v1/organization-types [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	items, err := h.svc.List(r.Context())
 	if err != nil {

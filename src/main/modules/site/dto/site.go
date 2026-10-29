@@ -23,6 +23,18 @@ type SiteResponse struct {
 	LastError         *string    `json:"last_error"`
 }
 
+// UpdateSiteRequest is the body of PATCH /v1/sites/{id}. Send only the fields
+// to change; a missing field keeps its current value.
+type UpdateSiteRequest struct {
+	Domain  *string `json:"domain" example:"soliq.uz"`                       // host name only; the crawler stays on it and www.<domain>
+	BaseURL *string `json:"base_url" example:"https://soliq.uz/"`            // where crawling starts; must be on the domain
+	Status  *string `json:"status" enums:"active,inactive" example:"active"` // inactive sites are never crawled
+}
+
+func (r UpdateSiteRequest) ToModel() model.Update {
+	return model.Update{Domain: r.Domain, BaseURL: r.BaseURL, Status: r.Status}
+}
+
 func FromModel(s model.Site) SiteResponse {
 	return SiteResponse{
 		ID: s.ID, CountryID: s.CountryID, OrganizationID: s.OrganizationID, Domain: s.Domain, BaseURL: s.BaseURL,

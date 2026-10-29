@@ -1,0 +1,1879 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Atlas crawls official government websites, turns every page into structured\ncrawling data with an LLM (category, record type, title, summary, ...) and serves it here.\n\nReference data (countries, organizations, categories, sites) is read-only and comes from\nthe seed files. Crawls can be started for one site or as a batch over whole countries.\n\nList endpoints use cursor paging: pass the returned next_cursor as ?cursor= to get the\nnext page; next_cursor is null on the last page.",
+        "title": "Atlas API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/health": {
+            "get": {
+                "description": "Pings the database. Returns status ok and the configured LLM runtime, or 503 when the database is down.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "status: ok, llm_runtime: llamacpp|vllm",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "status: down, database: the error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/categories": {
+            "get": {
+                "description": "Returns the taxonomy the LLM classifies pages into. Categories have subcategories\n(parent_id). With ?tree=true top-level categories are returned with their subcategories nested.\nNot paginated.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "categories"
+                ],
+                "summary": "List categories",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only subcategories of this category",
+                        "name": "parent_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only active (true) or inactive (false) categories",
+                        "name": "is_active",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only top-level categories (no parent)",
+                        "name": "top_level",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Nest subcategories under their category (ignores parent_id and top_level)",
+                        "name": "tree",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_CategoryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/categories/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "categories"
+                ],
+                "summary": "Get a category",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Category id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CategoryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Category not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/countries": {
+            "get": {
+                "description": "Returns countries ordered by id. With ?locale= the name is translated when a translation exists.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "countries"
+                ],
+                "summary": "List countries",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only countries in this region, e.g. Asia",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only active (true) or inactive (false) countries",
+                        "name": "is_active",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "uz",
+                            "ru",
+                            "kaa"
+                        ],
+                        "type": "string",
+                        "description": "Translate names into this locale",
+                        "name": "locale",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "next_cursor from the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 300, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_CountryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/countries/{id}": {
+            "get": {
+                "description": "Returns one country; translations maps locale to the translated name.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "countries"
+                ],
+                "summary": "Get a country",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Country id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CountryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Country not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Changes the English name and/or is_active. Send only the fields to change.\nDeactivating a country stops new crawls of its sites (batches and the scheduler skip it);\ncrawls already running finish normally.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "countries"
+                ],
+                "summary": "Update a country",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Country id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateCountryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated country",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CountryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad id, bad body, empty name, or nothing to update",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Country not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/crawl-batches": {
+            "get": {
+                "description": "Returns crawl batches newest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawl-batches"
+                ],
+                "summary": "List crawl batches",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only batches with this status, e.g. running",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "next_cursor from the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 50, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_BatchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Crawls every active official site of the chosen countries in the background\n(all active countries when the body is empty or country_ids is empty).\nOnly one batch runs at a time. Poll GET /v1/crawl-batches/{id} to follow it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawl-batches"
+                ],
+                "summary": "Start a crawl batch",
+                "parameters": [
+                    {
+                        "description": "Countries to crawl (optional)",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/dto.StartBatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Batch started",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BatchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid body, or no active sites in the selected countries",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Another batch is already running",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/crawl-batches/{id}": {
+            "get": {
+                "description": "Returns one batch with progress: runs counts its crawl runs per status and\nsites_pending is how many sites have not started yet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawl-batches"
+                ],
+                "summary": "Get a crawl batch",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Crawl batch id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BatchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Crawl batch not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/crawl-batches/{id}/cancel": {
+            "post": {
+                "description": "Stops a running batch: sites not started yet are not crawled, running crawls are cancelled.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawl-batches"
+                ],
+                "summary": "Cancel a crawl batch",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Crawl batch id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Cancel requested",
+                        "schema": {
+                            "$ref": "#/definitions/dto.BatchResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Crawl batch not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "The batch is not running anymore",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/crawl-runs": {
+            "get": {
+                "description": "Returns crawl runs newest first. A run is one crawl of one site, with page and data counters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawl-runs"
+                ],
+                "summary": "List crawl runs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only runs of this site",
+                        "name": "site_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only runs started by this batch",
+                        "name": "batch_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "running",
+                            "completed",
+                            "partial",
+                            "failed",
+                            "cancelled"
+                        ],
+                        "type": "string",
+                        "description": "Only runs with this status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "next_cursor from the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 50, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_CrawlRunResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/crawl-runs/{id}": {
+            "get": {
+                "description": "Returns one crawl run. While status is running the counters keep growing.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawl-runs"
+                ],
+                "summary": "Get a crawl run",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Crawl run id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CrawlRunResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Crawl run not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/crawling-data": {
+            "get": {
+                "description": "Returns the normalized content the LLM produced from crawled pages, newest first.\nOne item per page. The list leaves out the full content; get one item by id for it.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawling-data"
+                ],
+                "summary": "List crawling data",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only data of this country",
+                        "name": "country_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only data of this organization",
+                        "name": "organization_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only data of this site",
+                        "name": "site_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only data in this top-level category",
+                        "name": "category_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only data in this subcategory",
+                        "name": "subcategory_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only this record type, e.g. NEWS, LAW, DECREE (case-insensitive)",
+                        "name": "record_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only this ISO 639-1 language, e.g. uz, ru, en",
+                        "name": "language",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Published on or after (YYYY-MM-DD or RFC 3339)",
+                        "name": "published_from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Published before (YYYY-MM-DD or RFC 3339)",
+                        "name": "published_to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "next_cursor from the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 50, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_CrawlingDataSummary"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter, or published_from is not before published_to",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/crawling-data/{id}": {
+            "get": {
+                "description": "Returns one item with the full cleaned content and the hash of the source text.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawling-data"
+                ],
+                "summary": "Get crawling data",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Crawling data id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CrawlingDataResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Crawling data not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/organization-types": {
+            "get": {
+                "description": "Returns all organization types (ministry, agency, parliament, ...). Not paginated.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "organization-types"
+                ],
+                "summary": "List organization types",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_OrganizationTypeResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/organizations": {
+            "get": {
+                "description": "Returns government organizations (ministries, agencies, ...) ordered by id.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "organizations"
+                ],
+                "summary": "List organizations",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only organizations of this country",
+                        "name": "country_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only organizations of this type",
+                        "name": "organization_type_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only child organizations of this parent",
+                        "name": "parent_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only organizations with this status, e.g. active",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "next_cursor from the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 100, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_OrganizationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/organizations/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "organizations"
+                ],
+                "summary": "Get an organization",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Organization id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OrganizationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Organization not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Changes name, official_name, description and/or status. Send only the fields to change;\nan empty string clears official_name or description.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "organizations"
+                ],
+                "summary": "Update an organization",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Organization id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateOrganizationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated organization",
+                        "schema": {
+                            "$ref": "#/definitions/dto.OrganizationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad id, bad body, invalid value, or nothing to update",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Organization not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Another organization of the same country already has this name",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/pages": {
+            "get": {
+                "description": "Returns every URL the crawler has seen, newest first. status tells what happened to\nthe page on its last crawl (new, changed, unchanged, skipped, failed).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "pages"
+                ],
+                "summary": "List pages",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only pages of this site",
+                        "name": "site_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only pages with this status",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "next_cursor from the previous page (pages with a lower id follow)",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 100, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_PageResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sites": {
+            "get": {
+                "description": "Returns the websites Atlas crawls, with their crawl schedule and last result.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sites"
+                ],
+                "summary": "List sites",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only sites of this country",
+                        "name": "country_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only sites of this organization",
+                        "name": "organization_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only sites with this status, e.g. active",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "next_cursor from the previous page",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Page size (default 100, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/infrastructure.ListResponse-dto_SiteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid query parameter",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sites/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sites"
+                ],
+                "summary": "Get a site",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Site id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SiteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Site not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "description": "Changes domain, base_url and/or status. Send only the fields to change.\nbase_url must be on the domain (domain or www.domain); when changing the domain, send a\nmatching base_url in the same request. status inactive stops new crawls of the site; a crawl\nalready running finishes with the old settings. Crawl history and pages are kept.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sites"
+                ],
+                "summary": "Update a site",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Site id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dto.UpdateSiteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The updated site",
+                        "schema": {
+                            "$ref": "#/definitions/dto.SiteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad id, bad body, invalid domain/base_url/status, or nothing to update",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Site not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Another site already has this domain",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/sites/{id}/crawl": {
+            "post": {
+                "description": "Starts a crawl of one site in the background and returns the new crawl run right away.\nPoll GET /v1/crawl-runs/{id} to follow its progress.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "crawl-runs"
+                ],
+                "summary": "Crawl a site now",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Site id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Crawl started",
+                        "schema": {
+                            "$ref": "#/definitions/dto.CrawlRunResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "id is not a positive integer",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Site not found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "This site is already being crawled",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Too many crawls running; try again later",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "dto.BatchResponse": {
+            "type": "object",
+            "properties": {
+                "countries_total": {
+                    "type": "integer"
+                },
+                "country_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "runs": {
+                    "description": "Detail only (GET /v1/crawl-batches/{id}).",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "sites_pending": {
+                    "description": "not started yet (or never, when cancelled)",
+                    "type": "integer"
+                },
+                "sites_skipped": {
+                    "type": "integer"
+                },
+                "sites_total": {
+                    "type": "integer"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CategoryResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "integer"
+                },
+                "subcategories": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CategoryResponse"
+                    }
+                }
+            }
+        },
+        "dto.CountryResponse": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "iso2": {
+                    "type": "string"
+                },
+                "iso3": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "soato": {
+                    "type": "string"
+                },
+                "subregion": {
+                    "type": "string"
+                },
+                "translations": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "dto.CrawlRunResponse": {
+            "type": "object",
+            "properties": {
+                "batch_id": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "finished_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "pages_changed": {
+                    "type": "integer"
+                },
+                "pages_failed": {
+                    "type": "integer"
+                },
+                "pages_found": {
+                    "type": "integer"
+                },
+                "pages_new": {
+                    "type": "integer"
+                },
+                "pages_skipped": {
+                    "type": "integer"
+                },
+                "pages_unchanged": {
+                    "type": "integer"
+                },
+                "records_created": {
+                    "type": "integer"
+                },
+                "records_updated": {
+                    "type": "integer"
+                },
+                "site_id": {
+                    "type": "integer"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CrawlingDataResponse": {
+            "type": "object",
+            "properties": {
+                "category_id": {
+                    "type": "integer"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "content": {
+                    "type": "string"
+                },
+                "content_hash": {
+                    "type": "string"
+                },
+                "country_id": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "language_code": {
+                    "type": "string"
+                },
+                "organization_id": {
+                    "type": "integer"
+                },
+                "page_id": {
+                    "type": "integer"
+                },
+                "published_at": {
+                    "type": "string"
+                },
+                "record_type": {
+                    "type": "string"
+                },
+                "site_id": {
+                    "type": "integer"
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "subcategory_id": {
+                    "type": "integer"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.CrawlingDataSummary": {
+            "type": "object",
+            "properties": {
+                "category_id": {
+                    "type": "integer"
+                },
+                "confidence": {
+                    "type": "number"
+                },
+                "country_id": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "language_code": {
+                    "type": "string"
+                },
+                "organization_id": {
+                    "type": "integer"
+                },
+                "page_id": {
+                    "type": "integer"
+                },
+                "published_at": {
+                    "type": "string"
+                },
+                "record_type": {
+                    "type": "string"
+                },
+                "site_id": {
+                    "type": "integer"
+                },
+                "source_url": {
+                    "type": "string"
+                },
+                "subcategory_id": {
+                    "type": "integer"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.OrganizationResponse": {
+            "type": "object",
+            "properties": {
+                "country_id": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "official_name": {
+                    "type": "string"
+                },
+                "organization_type_id": {
+                    "type": "integer"
+                },
+                "parent_id": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.OrganizationTypeResponse": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.PageResponse": {
+            "type": "object",
+            "properties": {
+                "content_hash": {
+                    "type": "string"
+                },
+                "first_seen_at": {
+                    "type": "string"
+                },
+                "http_status": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "language_code": {
+                    "type": "string"
+                },
+                "last_crawled_at": {
+                    "type": "string"
+                },
+                "last_seen_at": {
+                    "type": "string"
+                },
+                "site_id": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "dto.SiteResponse": {
+            "type": "object",
+            "properties": {
+                "base_url": {
+                    "type": "string"
+                },
+                "country_id": {
+                    "type": "integer"
+                },
+                "crawl_interval_sec": {
+                    "type": "integer"
+                },
+                "domain": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_official": {
+                    "type": "boolean"
+                },
+                "last_crawled_at": {
+                    "type": "string"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_error_at": {
+                    "type": "string"
+                },
+                "last_success_at": {
+                    "type": "string"
+                },
+                "next_crawl_at": {
+                    "type": "string"
+                },
+                "organization_id": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "verification_score": {
+                    "type": "number"
+                }
+            }
+        },
+        "dto.StartBatchRequest": {
+            "type": "object",
+            "properties": {
+                "country_ids": {
+                    "description": "empty or missing = all active countries",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                }
+            }
+        },
+        "dto.UpdateCountryRequest": {
+            "type": "object",
+            "properties": {
+                "is_active": {
+                    "description": "only active countries are crawled",
+                    "type": "boolean",
+                    "example": true
+                },
+                "name": {
+                    "description": "English name, 1-150 characters",
+                    "type": "string",
+                    "example": "Uzbekistan"
+                }
+            }
+        },
+        "dto.UpdateOrganizationRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "description": "free text; \"\" clears it",
+                    "type": "string",
+                    "example": "Collects taxes and enforces tax law."
+                },
+                "name": {
+                    "description": "short name, 1-300 characters, unique within the country",
+                    "type": "string",
+                    "example": "Tax Committee"
+                },
+                "official_name": {
+                    "description": "full official name, up to 500 characters; \"\" clears it",
+                    "type": "string",
+                    "example": "Tax Committee under the Ministry of Economy"
+                },
+                "status": {
+                    "description": "active or inactive",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "inactive"
+                    ],
+                    "example": "active"
+                }
+            }
+        },
+        "dto.UpdateSiteRequest": {
+            "type": "object",
+            "properties": {
+                "base_url": {
+                    "description": "where crawling starts; must be on the domain",
+                    "type": "string",
+                    "example": "https://soliq.uz/"
+                },
+                "domain": {
+                    "description": "host name only; the crawler stays on it and www.\u003cdomain\u003e",
+                    "type": "string",
+                    "example": "soliq.uz"
+                },
+                "status": {
+                    "description": "inactive sites are never crawled",
+                    "type": "string",
+                    "enum": [
+                        "active",
+                        "inactive"
+                    ],
+                    "example": "active"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_BatchResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.BatchResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_CategoryResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CategoryResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_CountryResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CountryResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_CrawlRunResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CrawlRunResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_CrawlingDataSummary": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.CrawlingDataSummary"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_OrganizationResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.OrganizationResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_OrganizationTypeResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.OrganizationTypeResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_PageResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.PageResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "infrastructure.ListResponse-dto_SiteResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dto.SiteResponse"
+                    }
+                },
+                "next_cursor": {
+                    "type": "integer"
+                }
+            }
+        }
+    }
+}

@@ -111,6 +111,41 @@ func (r *Repo) Get(ctx context.Context, id int64) (model.Country, error) {
 	return c, err
 }
 
+// Update changes the fields set in u and returns the updated country.
+func (r *Repo) Update(ctx context.Context, id int64, u model.Update) (model.Country, error) {
+	c, err := scan(
+		r.db.QueryRowContext(ctx, `
+		UPDATE
+			countries
+		SET
+			name = COALESCE($2, name),
+			is_active = COALESCE($3, is_active),
+			updated_at = NOW()
+		WHERE
+			id = $1
+		RETURNING
+			id,
+			iso2,
+			iso3,
+			name,
+			soato,
+			region,
+			subregion,
+			is_active,
+			created_at,
+			updated_at`,
+			id, u.Name, u.IsActive,
+		),
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, fmt.Errorf("country %d: %w", id, infrastructure.ErrNotFound)
+	}
+	if err != nil {
+		return c, fmt.Errorf("update country %d: %w", id, err)
+	}
+	return c, nil
+}
+
 func (r *Repo) Translations(ctx context.Context, countryID int64) ([]model.Translation, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT

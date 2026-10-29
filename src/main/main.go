@@ -17,9 +17,12 @@ import (
 	"sync"
 	"syscall"
 
+	httpSwagger "github.com/swaggo/http-swagger/v2"
+
 	"github.com/cgouz/atlas/src/main/app"
 	crawlerservice "github.com/cgouz/atlas/src/main/common/crawler"
 	extractorservice "github.com/cgouz/atlas/src/main/common/extractor"
+	_ "github.com/cgouz/atlas/src/main/docs" // registers the generated Swagger spec
 	"github.com/cgouz/atlas/src/main/infrastructure"
 	categoryhandler "github.com/cgouz/atlas/src/main/modules/category/handler"
 	categoryrepo "github.com/cgouz/atlas/src/main/modules/category/repo"
@@ -49,6 +52,17 @@ import (
 	"github.com/cgouz/atlas/src/resources"
 )
 
+// @title           Atlas API
+// @version         1.0
+// @description     Atlas crawls official government websites, turns every page into structured
+// @description     crawling data with an LLM (category, record type, title, summary, ...) and serves it here.
+// @description
+// @description     Reference data (countries, organizations, categories, sites) is read-only and comes from
+// @description     the seed files. Crawls can be started for one site or as a batch over whole countries.
+// @description
+// @description     List endpoints use cursor paging: pass the returned next_cursor as ?cursor= to get the
+// @description     next page; next_cursor is null on the last page.
+// @BasePath        /
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "atlas:", err)
@@ -119,6 +133,7 @@ func run() error {
 	// HTTP API.
 	mux := http.NewServeMux()
 	app.RegisterHealth(mux, db, llmClient.Runtime())
+	mux.Handle("GET /swagger/", httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json")))
 	countryhandler.New(countries, log).Register(mux)
 	orgtypehandler.New(orgTypes, log).Register(mux)
 	organizationhandler.New(organizations, log).Register(mux)

@@ -16,7 +16,19 @@ type Organization struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
-const StatusActive = "active"
+const (
+	StatusActive   = "active"
+	StatusInactive = "inactive"
+)
+
+// Update holds the fields PATCH /v1/organizations/{id} may change; nil keeps
+// the current value. An empty OfficialName or Description clears it.
+type Update struct {
+	Name         *string
+	OfficialName *string
+	Description  *string
+	Status       *string
+}
 
 type ListFilter struct {
 	CountryID          *int64

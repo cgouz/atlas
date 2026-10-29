@@ -9,7 +9,8 @@ CREATE TABLE crawl_batches (
     finished_at         TIMESTAMPTZ,
     error_message       TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    batch_id            BIGINT
-    
-    FOREIGN KEY (batch_id) REFERENCES crawl_batches(id);
 );
+
+-- A crawl run started by a batch points to it; NULL for runs outside a batch.
+ALTER TABLE crawl_runs
+    ADD COLUMN batch_id BIGINT REFERENCES crawl_batches(id);

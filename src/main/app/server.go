@@ -13,7 +13,20 @@ import (
 
 // RegisterHealth adds GET /health, which also pings the database.
 func RegisterHealth(mux *http.ServeMux, db *sql.DB, runtime string) {
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /health", health(db, runtime))
+}
+
+// health reports whether the service and its database are up.
+//
+// @Summary      Health check
+// @Description  Pings the database. Returns status ok and the configured LLM runtime, or 503 when the database is down.
+// @Tags         health
+// @Produce      json
+// @Success      200  {object}  map[string]string  "status: ok, llm_runtime: llamacpp|vllm"
+// @Failure      503  {object}  map[string]string  "status: down, database: the error"
+// @Router       /health [get]
+func health(db *sql.DB, runtime string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := db.PingContext(ctx); err != nil {
@@ -21,7 +34,7 @@ func RegisterHealth(mux *http.ServeMux, db *sql.DB, runtime string) {
 			return
 		}
 		infrastructure.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "llm_runtime": runtime})
-	})
+	}
 }
 
 // WithLogging logs every request at INFO with method, path, status and duration.

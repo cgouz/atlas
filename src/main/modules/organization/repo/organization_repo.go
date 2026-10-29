@@ -98,6 +98,46 @@ func (r *Repo) Get(ctx context.Context, id int64) (model.Organization, error) {
 	return o, err
 }
 
+// Update changes the fields set in u and returns the updated organization.
+// For official_name and description, NULL keeps the value and '' clears it.
+func (r *Repo) Update(ctx context.Context, id int64, u model.Update) (model.Organization, error) {
+	o, err := scan(
+		r.db.QueryRowContext(ctx, `
+		UPDATE
+			organizations
+		SET
+			name = COALESCE($2, name),
+			official_name = CASE WHEN $3::text IS NULL THEN official_name ELSE NULLIF($3, '') END,
+			description = CASE WHEN $4::text IS NULL THEN description ELSE NULLIF($4, '') END,
+			status = COALESCE($5, status),
+			updated_at = NOW()
+		WHERE
+			id = $1
+		RETURNING
+			id,
+			country_id,
+			organization_type_id,
+			parent_id,
+			name,
+			official_name,
+			description,
+			status,
+			created_at,
+			updated_at`,
+			id, u.Name, u.OfficialName, u.Description, u.Status,
+		),
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return o, fmt.Errorf("organization %d: %w", id, infrastructure.ErrNotFound)
+	case infrastructure.IsUniqueViolation(err):
+		return o, fmt.Errorf("%w: another organization of this country is already named %q", infrastructure.ErrConflict, *u.Name)
+	case err != nil:
+		return o, fmt.Errorf("update organization %d: %w", id, err)
+	}
+	return o, nil
+}
+
 // UpsertSeed expects parents to come before their children in items.
 func (r *Repo) UpsertSeed(ctx context.Context, items []model.Organization) error {
 	for _, o := range items {

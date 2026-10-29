@@ -115,11 +115,21 @@ func (r *Repo) Get(ctx context.Context, id int64) (model.Site, error) {
 	return s, err
 }
 
-// Due returns active official sites whose next crawl time has passed (or was
-// never set), oldest first.
-func (r *Repo) Due(ctx context.Context, now time.Time, limit int) ([]model.Site, error) {
-	return r.query(ctx, `
-		SELECT
+// Update changes the fields set in u and returns the updated site. Crawl
+// state (last_*, next_crawl_at) is left as is.
+func (r *Repo) Update(ctx context.Context, id int64, u model.Update) (model.Site, error) {
+	s, err := scan(
+		r.db.QueryRowContext(ctx, `
+		UPDATE
+			sites
+		SET
+			domain = COALESCE($2, domain),
+			base_url = COALESCE($3, base_url),
+			status = COALESCE($4, status),
+			updated_at = NOW()
+		WHERE
+			id = $1
+		RETURNING
 			id,
 			country_id,
 			organization_id,
@@ -135,16 +145,53 @@ func (r *Repo) Due(ctx context.Context, now time.Time, limit int) ([]model.Site,
 			last_error_at,
 			last_error,
 			created_at,
-			updated_at
+			updated_at`,
+			id, u.Domain, u.BaseURL, u.Status,
+		),
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return s, fmt.Errorf("site %d: %w", id, infrastructure.ErrNotFound)
+	case infrastructure.IsUniqueViolation(err):
+		return s, fmt.Errorf("%w: another site already has domain %q", infrastructure.ErrConflict, *u.Domain)
+	case err != nil:
+		return s, fmt.Errorf("update site %d: %w", id, err)
+	}
+	return s, nil
+}
+
+// Due returns active official sites of active countries whose next crawl time
+// has passed (or was never set), oldest first.
+func (r *Repo) Due(ctx context.Context, now time.Time, limit int) ([]model.Site, error) {
+	return r.query(ctx, `
+		SELECT
+			s.id,
+			s.country_id,
+			s.organization_id,
+			s.domain,
+			s.base_url,
+			s.is_official,
+			s.verification_score,
+			s.status,
+			s.crawl_interval_sec,
+			s.last_crawled_at,
+			s.next_crawl_at,
+			s.last_success_at,
+			s.last_error_at,
+			s.last_error,
+			s.created_at,
+			s.updated_at
 		FROM
-			sites
+			sites s
+			JOIN countries c ON c.id = s.country_id
 		WHERE
-			status = 'active'
-			AND is_official = TRUE
-			AND (next_crawl_at IS NULL OR next_crawl_at <= $1)
+			s.status = 'active'
+			AND s.is_official = TRUE
+			AND c.is_active = TRUE
+			AND (s.next_crawl_at IS NULL OR s.next_crawl_at <= $1)
 		ORDER BY
-			next_crawl_at NULLS FIRST,
-			id
+			s.next_crawl_at NULLS FIRST,
+			s.id
 		LIMIT
 			$2`,
 		now, limit,

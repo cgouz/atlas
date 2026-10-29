@@ -24,6 +24,12 @@ type Translation struct {
 	Name      string `json:"name"`
 }
 
+// Update holds the fields PATCH /v1/countries/{id} may change; nil keeps the current value.
+type Update struct {
+	Name     *string
+	IsActive *bool
+}
+
 type ListFilter struct {
 	Region   *string
 	IsActive *bool

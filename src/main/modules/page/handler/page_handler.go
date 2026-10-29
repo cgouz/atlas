@@ -24,6 +24,19 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 // list supports ?site_id=, ?status=, ?cursor=, ?limit= (newest first).
+//
+// @Summary      List pages
+// @Description  Returns every URL the crawler has seen, newest first. status tells what happened to
+// @Description  the page on its last crawl (new, changed, unchanged, skipped, failed).
+// @Tags         pages
+// @Produce      json
+// @Param        site_id  query  int     false  "Only pages of this site"
+// @Param        status   query  string  false  "Only pages with this status"
+// @Param        cursor   query  int     false  "next_cursor from the previous page (pages with a lower id follow)"
+// @Param        limit    query  int     false  "Page size (default 100, max 1000)"
+// @Success      200  {object}  infrastructure.ListResponse[dto.PageResponse]
+// @Failure      400  {object}  map[string]string  "Invalid query parameter"
+// @Router       /v1/pages [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	page, err := infrastructure.ParsePage(r, 100, 1000)
 	if err != nil {

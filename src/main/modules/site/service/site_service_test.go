@@ -27,3 +27,36 @@ func TestRetryAt(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeDomain(t *testing.T) {
+	good := map[string]string{
+		"gov.uz":             "gov.uz",
+		"  SOLIQ.UZ  ":       "soliq.uz",
+		"www.president.uz":   "president.uz",
+		"stat.uz.":           "stat.uz",
+		"xn--80ak6aa92e.com": "xn--80ak6aa92e.com",
+	}
+	for in, want := range good {
+		if got, err := NormalizeDomain(in); err != nil || got != want {
+			t.Errorf("NormalizeDomain(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "localhost", "https://gov.uz", "gov.uz/path", "gov uz", "-gov.uz", "gov..uz", "гов.уз"} {
+		if _, err := NormalizeDomain(in); err == nil {
+			t.Errorf("NormalizeDomain(%q) accepted an invalid domain", in)
+		}
+	}
+}
+
+func TestCheckBaseURL(t *testing.T) {
+	for _, u := range []string{"https://gov.uz/", "http://www.gov.uz/ru", "https://gov.uz"} {
+		if err := CheckBaseURL(u, "gov.uz"); err != nil {
+			t.Errorf("CheckBaseURL(%q) = %v", u, err)
+		}
+	}
+	for _, u := range []string{"gov.uz", "ftp://gov.uz/", "https://soliq.uz/", "https://my.gov.uz/", "/relative"} {
+		if err := CheckBaseURL(u, "gov.uz"); err == nil {
+			t.Errorf("CheckBaseURL(%q) accepted a URL off the domain", u)
+		}
+	}
+}

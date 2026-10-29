@@ -23,7 +23,17 @@ type Site struct {
 	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
-const StatusActive = "active"
+const (
+	StatusActive   = "active"
+	StatusInactive = "inactive" // never crawled by the scheduler or batches
+)
+
+// Update holds the fields PATCH /v1/sites/{id} may change; nil keeps the current value.
+type Update struct {
+	Domain  *string
+	BaseURL *string
+	Status  *string
+}
 
 func (s Site) CrawlInterval() time.Duration {
 	return time.Duration(s.CrawlIntervalSec) * time.Second

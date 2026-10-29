@@ -27,6 +27,26 @@ func (h *Handler) Register(mux *http.ServeMux) {
 // list supports ?country_id=, ?organization_id=, ?site_id=, ?category_id=,
 // ?subcategory_id=, ?record_type=, ?language=, ?published_from=,
 // ?published_to=, ?cursor=, ?limit= (newest first).
+//
+// @Summary      List crawling data
+// @Description  Returns the normalized content the LLM produced from crawled pages, newest first.
+// @Description  One item per page. The list leaves out the full content; get one item by id for it.
+// @Tags         crawling-data
+// @Produce      json
+// @Param        country_id      query  int     false  "Only data of this country"
+// @Param        organization_id query  int     false  "Only data of this organization"
+// @Param        site_id         query  int     false  "Only data of this site"
+// @Param        category_id     query  int     false  "Only data in this top-level category"
+// @Param        subcategory_id  query  int     false  "Only data in this subcategory"
+// @Param        record_type     query  string  false  "Only this record type, e.g. NEWS, LAW, DECREE (case-insensitive)"
+// @Param        language        query  string  false  "Only this ISO 639-1 language, e.g. uz, ru, en"
+// @Param        published_from  query  string  false  "Published on or after (YYYY-MM-DD or RFC 3339)"
+// @Param        published_to    query  string  false  "Published before (YYYY-MM-DD or RFC 3339)"
+// @Param        cursor          query  int     false  "next_cursor from the previous page"
+// @Param        limit           query  int     false  "Page size (default 50, max 500)"
+// @Success      200  {object}  infrastructure.ListResponse[dto.CrawlingDataSummary]
+// @Failure      400  {object}  map[string]string  "Invalid query parameter, or published_from is not before published_to"
+// @Router       /v1/crawling-data [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	f, err := parseFilter(r)
 	if err != nil {
@@ -74,6 +94,17 @@ func parseFilter(r *http.Request) (model.ListFilter, error) {
 	return f, nil
 }
 
+// get returns one crawling data item with its full content.
+//
+// @Summary      Get crawling data
+// @Description  Returns one item with the full cleaned content and the hash of the source text.
+// @Tags         crawling-data
+// @Produce      json
+// @Param        id   path      int  true  "Crawling data id"
+// @Success      200  {object}  dto.CrawlingDataResponse
+// @Failure      400  {object}  map[string]string  "id is not a positive integer"
+// @Failure      404  {object}  map[string]string  "Crawling data not found"
+// @Router       /v1/crawling-data/{id} [get]
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := infrastructure.PathID(r)
 	if err != nil {

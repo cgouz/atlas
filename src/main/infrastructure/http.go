@@ -17,7 +17,20 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrInvalidInput marks errors caused by bad client input.
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrConflict marks a change that clashes with existing data (a unique value already taken).
+	ErrConflict = errors.New("conflict")
 )
+
+// DecodeJSON reads a JSON request body (at most 1 MiB) into v; unknown fields
+// are rejected so a typo in a field name is not silently ignored.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return fmt.Errorf("%w: body: %v", ErrInvalidInput, err)
+	}
+	return nil
+}
 
 // SHA256 hashes a string; used for url_hash and content_hash.
 func SHA256(s string) []byte {
@@ -132,14 +145,16 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// WriteError maps ErrNotFound to 404 and ErrInvalidInput to 400; anything
-// else is logged and returned as 500 without internal details.
+// WriteError maps ErrNotFound to 404, ErrInvalidInput to 400 and ErrConflict
+// to 409; anything else is logged and returned as 500 without internal details.
 func WriteError(w http.ResponseWriter, log *slog.Logger, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		WriteJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 	case errors.Is(err, ErrInvalidInput):
 		WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, ErrConflict):
+		WriteJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 	default:
 		log.Error("request failed", "error", err)
 		WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})

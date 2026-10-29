@@ -26,6 +26,20 @@ func (h *Handler) Register(mux *http.ServeMux) {
 
 // list supports ?parent_id=, ?is_active=, ?top_level=true and ?tree=true
 // (categories with their subcategories nested).
+//
+// @Summary      List categories
+// @Description  Returns the taxonomy the LLM classifies pages into. Categories have subcategories
+// @Description  (parent_id). With ?tree=true top-level categories are returned with their subcategories nested.
+// @Description  Not paginated.
+// @Tags         categories
+// @Produce      json
+// @Param        parent_id  query  int   false  "Only subcategories of this category"
+// @Param        is_active  query  bool  false  "Only active (true) or inactive (false) categories"
+// @Param        top_level  query  bool  false  "Only top-level categories (no parent)"
+// @Param        tree       query  bool  false  "Nest subcategories under their category (ignores parent_id and top_level)"
+// @Success      200  {object}  infrastructure.ListResponse[dto.CategoryResponse]
+// @Failure      400  {object}  map[string]string  "Invalid query parameter"
+// @Router       /v1/categories [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	
 	parentID, err := infrastructure.QueryInt64(r, "parent_id")
@@ -79,6 +93,16 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	infrastructure.WriteJSON(w, http.StatusOK, infrastructure.ListResponse[dto.CategoryResponse]{Items: out})
 }
 
+// get returns one category or subcategory.
+//
+// @Summary      Get a category
+// @Tags         categories
+// @Produce      json
+// @Param        id   path      int  true  "Category id"
+// @Success      200  {object}  dto.CategoryResponse
+// @Failure      400  {object}  map[string]string  "id is not a positive integer"
+// @Failure      404  {object}  map[string]string  "Category not found"
+// @Router       /v1/categories/{id} [get]
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	
 	id, err := infrastructure.PathID(r)

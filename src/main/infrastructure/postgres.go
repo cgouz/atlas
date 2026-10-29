@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -10,8 +11,14 @@ import (
 	"strconv"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
+
+// IsUniqueViolation reports whether err is PostgreSQL's unique_violation (23505).
+func IsUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
+}
 
 
 type DBTX interface {
