@@ -90,7 +90,7 @@ func run() error {
 	}
 	llmClient, err := llmservice.NewClient(cfg.LLM.Runtime, llmservice.ClientConfig{
 		BaseURL: cfg.LLM.BaseURL, Model: cfg.LLM.Model, APIKey: cfg.LLM.APIKey,
-		Timeout: cfg.LLM.Timeout, MaxTokens: cfg.LLM.MaxTokens,
+		Timeout: cfg.LLM.Timeout, MaxTokens: cfg.LLM.MaxTokens, SystemPrompt: settings.SystemPrompt,
 	})
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func run() error {
 		Workers: cfg.Crawler.Workers, Timeout: cfg.Crawler.Timeout,
 		MaxBodyBytes: cfg.Crawler.MaxBodyBytes, UserAgent: cfg.Crawler.UserAgent,
 	}, log)
-	normalizer := llmservice.NewNormalizer(llmClient, cfg.LLM.Workers, cfg.LLM.MaxRetries, cfg.LLM.MaxInputChars, log)
+	normalizer := llmservice.NewNormalizer(llmClient, settings.OutputSchema, cfg.LLM.Workers, cfg.LLM.MaxRetries, cfg.LLM.MaxInputChars, log)
 	runner := crawlservice.NewRunner(ctx, crawlservice.RunnerDeps{
 		DB: db, Sites: sites, Countries: countries, Organizations: organizations, Categories: categories,
 		Crawler: crawler, Normalizer: normalizer, TaxonomySettings: settings.Taxonomy,

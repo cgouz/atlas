@@ -1466,6 +1466,10 @@ const docTemplate = `{
                 "language_code": {
                     "type": "string"
                 },
+                "llm_output": {
+                    "description": "LLMOutput is the model's validated answer: record_type, category_code,\nsubcategory_code, title, language, published_at, summary, keywords,\nconfidence. null for rows stored before it was kept.",
+                    "type": "object"
+                },
                 "organization_id": {
                     "type": "integer"
                 },

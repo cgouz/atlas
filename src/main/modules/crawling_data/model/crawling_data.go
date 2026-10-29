@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -22,12 +23,14 @@ type CrawlingData struct {
 	Content        string
 	Summary        *string
 	Confidence     *float64
-	ContentHash    []byte
+	LLMOutput      json.RawMessage // validated LLM answer (JSONB); nil for older rows
 	CreatedAt      time.Time
 	UpdatedAt      *time.Time
 
-	// SourceURL is read from pages.url; it is not a crawling_data column.
-	SourceURL string
+	// SourceURL and ContentHash are read from pages (url, content_hash); they
+	// are not crawling_data columns.
+	SourceURL   string
+	ContentHash []byte
 }
 
 type ListFilter struct {

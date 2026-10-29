@@ -1,0 +1,61 @@
+{
+  "type": "object",
+  "properties": {
+    "record_type": {
+      "type": "string",
+      "description": "Kind of document. The allowed values are filled in from settings/taxonomy.json."
+    },
+    "category_code": {
+      "type": "string",
+      "description": "Top-level category code. The allowed values are filled in from the active categories."
+    },
+    "subcategory_code": {
+      "type": ["string", "null"],
+      "description": "Subcategory of the chosen category, or null. The allowed values are filled in from the active categories."
+    },
+    "title": {
+      "type": "string",
+      "description": "Short factual title in the language of the page."
+    },
+    "language": {
+      "type": "string",
+      "description": "ISO 639-1 code of the page text."
+    },
+    "published_at": {
+      "type": ["string", "null"],
+      "description": "Publication date as YYYY-MM-DD or RFC 3339, or null."
+    },
+    "content": {
+      "type": "string",
+      "description": "Main content as clean plain text in the original language."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One to three sentences in the language of the page."
+    },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "3 to 10 short keywords in the language of the page."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "How well the category and subcategory fit, from 0 to 1."
+    }
+  },
+  "required": [
+    "record_type",
+    "category_code",
+    "subcategory_code",
+    "title",
+    "language",
+    "published_at",
+    "content",
+    "summary",
+    "keywords",
+    "confidence"
+  ],
+  "additionalProperties": false
+}

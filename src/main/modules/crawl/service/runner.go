@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/url"
@@ -496,6 +497,7 @@ func buildCrawlingData(rn *run, job pageJob, res llmmodel.Result) crawlingdatamo
 		language = job.content.Language
 	}
 	confidence := res.Confidence
+	llmOutput, _ := json.Marshal(res.Output) // plain strings and numbers: cannot fail
 	return crawlingdatamodel.CrawlingData{
 		CountryID:      rn.site.CountryID,
 		OrganizationID: rn.site.OrganizationID,
@@ -510,7 +512,7 @@ func buildCrawlingData(rn *run, job pageJob, res llmmodel.Result) crawlingdatamo
 		Content:        content,
 		Summary:        nonEmpty(res.Summary),
 		Confidence:     &confidence,
-		ContentHash:    job.hash,
+		LLMOutput:      llmOutput,
 	}
 }
 

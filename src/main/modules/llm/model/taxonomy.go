@@ -117,6 +117,24 @@ type Result struct {
 	Summary       string
 	Keywords      []string
 	Confidence    float64
+
+	// Output is the same answer in the LLM's own terms, stored as crawling_data.llm_output.
+	Output StoredOutput
+}
+
+// StoredOutput is the validated LLM answer as stored in crawling_data.llm_output:
+// cleaned values with category codes (not ids). Content is left out because it
+// has its own column.
+type StoredOutput struct {
+	RecordType      string   `json:"record_type"`
+	CategoryCode    string   `json:"category_code"`
+	SubcategoryCode *string  `json:"subcategory_code"`
+	Title           string   `json:"title"`
+	Language        string   `json:"language"`
+	PublishedAt     *string  `json:"published_at"` // as the LLM wrote it
+	Summary         string   `json:"summary"`
+	Keywords        []string `json:"keywords"`
+	Confidence      float64  `json:"confidence"`
 }
 
 // ValidationError marks LLM output that does not satisfy the taxonomy rules.

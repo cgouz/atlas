@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,6 +33,20 @@ func testTaxonomy(t *testing.T) *model.Taxonomy {
 		t.Fatal(err)
 	}
 	return tax
+}
+
+// testSchema is the real resources/prompts/normalize_output.schema.json.
+func testSchema(t *testing.T) OutputSchemaTemplate {
+	t.Helper()
+	data, err := os.ReadFile("../../../../resources/prompts/normalize_output.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := ParseOutputSchema(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }
 
 func validOutput() model.NormalizeOutput {
@@ -121,11 +136,36 @@ func TestParseOutput(t *testing.T) {
 }
 
 func TestOutputSchemaUsesTaxonomyEnums(t *testing.T) {
-	schema := OutputSchema(testTaxonomy(t))
+	schema := testSchema(t).OutputSchema(testTaxonomy(t))
 	raw, _ := json.Marshal(schema)
 	for _, want := range []string{`"FIN.TAX"`, `"UNKNOWN"`, `"REGULATION"`, `"additionalProperties":false`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("schema is missing %s", want)
+		}
+	}
+	// Each call is a fresh copy: enums of one taxonomy must not leak into the template.
+	if again, _ := json.Marshal(testSchema(t).OutputSchema(testTaxonomy(t))); string(again) != string(raw) {
+		t.Error("OutputSchema must give the same schema on every call")
+	}
+}
+
+func TestParseOutputSchemaRejectsMismatch(t *testing.T) {
+	valid, _ := os.ReadFile("../../../../resources/prompts/normalize_output.schema.json")
+	cases := map[string]func(map[string]any){
+		"missing field": func(s map[string]any) { delete(s["properties"].(map[string]any), "summary") },
+		"unknown field": func(s map[string]any) { s["properties"].(map[string]any)["tags"] = map[string]any{"type": "string"} },
+		"not required":  func(s map[string]any) { s["required"] = []any{"record_type"} },
+		"hardcoded enums": func(s map[string]any) {
+			s["properties"].(map[string]any)["category_code"].(map[string]any)["enum"] = []any{"FIN"}
+		},
+	}
+	for name, breakIt := range cases {
+		var s map[string]any
+		json.Unmarshal(valid, &s)
+		breakIt(s)
+		data, _ := json.Marshal(s)
+		if _, err := ParseOutputSchema(data); err == nil {
+			t.Errorf("%s: ParseOutputSchema accepted a broken schema", name)
 		}
 	}
 }
@@ -169,7 +209,8 @@ func mustJSON(v any) string {
 func TestNewClientSelectsRuntime(t *testing.T) {
 	for runtime, wantFormat := range map[string]string{RuntimeVLLM: "json_schema", RuntimeLlamaCpp: "json_object"} {
 		srv, bodies := fakeServer(t, mustJSON(validOutput()))
-		client, err := NewClient(runtime, ClientConfig{BaseURL: srv.URL + "/v1", Model: "qwen-test", Timeout: 5 * time.Second, MaxTokens: 512})
+		client, err := NewClient(runtime, ClientConfig{BaseURL: srv.URL + "/v1", Model: "qwen-test", Timeout: 5 * time.Second,
+			MaxTokens: 512, SystemPrompt: "test system prompt"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -177,7 +218,7 @@ func TestNewClientSelectsRuntime(t *testing.T) {
 			t.Errorf("%s: Runtime/Model = %s/%s", runtime, client.Runtime(), client.Model())
 		}
 		out, err := client.Normalize(context.Background(), model.NormalizeInput{SourceURL: "https://example.gov/a", Content: "text"},
-			OutputSchema(testTaxonomy(t)))
+			testSchema(t).OutputSchema(testTaxonomy(t)))
 		if err != nil || out.CategoryCode != "FIN" {
 			t.Fatalf("%s: out=%+v err=%v", runtime, out, err)
 		}
@@ -187,6 +228,9 @@ func TestNewClientSelectsRuntime(t *testing.T) {
 			t.Errorf("%s: unexpected request %v", runtime, body)
 		}
 		msgs := body["messages"].([]any)
+		if sys := msgs[0].(map[string]any); sys["role"] != "system" || sys["content"] != "test system prompt" {
+			t.Errorf("%s: first message must be the configured system prompt, got %v", runtime, sys)
+		}
 		if user := msgs[1].(map[string]any)["content"].(string); !strings.Contains(user, `"source_url":"https://example.gov/a"`) {
 			t.Errorf("%s: user message must carry the input JSON, got %s", runtime, user)
 		}
@@ -201,7 +245,7 @@ func TestNormalizerRetriesAndValidates(t *testing.T) {
 	invalid.CategoryCode = "BUSINESS_TAX_POLICY"
 	srv, bodies := fakeServer(t, "status:503", "not json", mustJSON(invalid), mustJSON(validOutput()))
 	client, _ := NewClient(RuntimeVLLM, ClientConfig{BaseURL: srv.URL + "/v1", Timeout: 5 * time.Second})
-	n := NewNormalizer(client, 1, 3, 10, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	n := NewNormalizer(client, testSchema(t), 1, 3, 10, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	n.retryDelay = time.Millisecond
 
 	res, err := n.Normalize(context.Background(), model.NormalizeInput{Content: "0123456789abcdef"}, testTaxonomy(t))
@@ -219,7 +263,7 @@ func TestNormalizerRetriesAndValidates(t *testing.T) {
 
 	srv, _ = fakeServer(t, mustJSON(invalid))
 	client, _ = NewClient(RuntimeLlamaCpp, ClientConfig{BaseURL: srv.URL + "/v1", Timeout: 5 * time.Second})
-	n = NewNormalizer(client, 1, 1, 1000, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	n = NewNormalizer(client, testSchema(t), 1, 1, 1000, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	n.retryDelay = time.Millisecond
 	if _, err := n.Normalize(context.Background(), model.NormalizeInput{}, testTaxonomy(t)); err == nil {
 		t.Fatal("invalid taxonomy output must never be returned as a result")
@@ -231,7 +275,7 @@ func TestNormalizerOmitsContentAfterTruncation(t *testing.T) {
 	short.Content = ""
 	srv, bodies := fakeServer(t, "length", mustJSON(short))
 	client, _ := NewClient(RuntimeLlamaCpp, ClientConfig{BaseURL: srv.URL + "/v1", Timeout: 5 * time.Second})
-	n := NewNormalizer(client, 1, 2, 1000, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	n := NewNormalizer(client, testSchema(t), 1, 2, 1000, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	n.retryDelay = time.Millisecond
 
 	res, err := n.Normalize(context.Background(), model.NormalizeInput{Content: "long page"}, testTaxonomy(t))
@@ -244,5 +288,23 @@ func TestNormalizerOmitsContentAfterTruncation(t *testing.T) {
 		if in.OmitContent != want {
 			t.Errorf("call %d: omit_content = %v, want %v", i+1, in.OmitContent, want)
 		}
+	}
+}
+
+func TestValidateKeepsStoredOutput(t *testing.T) {
+	out := validOutput()
+	out.RecordType, out.CategoryCode = " regulation ", " FIN "
+	res, err := Validate(out, testTaxonomy(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(res.Output)
+	want := `{"record_type":"REGULATION","category_code":"FIN","subcategory_code":"FIN.TAX","title":"Changes to VAT rates",` +
+		`"language":"en","published_at":"2026-01-01","summary":"VAT rates change.","keywords":["VAT","tax"],"confidence":0.98}`
+	if string(got) != want {
+		t.Errorf("stored output:\n got %s\nwant %s", got, want)
+	}
+	if strings.Contains(string(got), "content") {
+		t.Error("content has its own column and must not be stored twice")
 	}
 }

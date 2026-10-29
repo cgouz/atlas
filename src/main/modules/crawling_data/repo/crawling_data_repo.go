@@ -39,7 +39,7 @@ func (r *Repo) Upsert(ctx context.Context, d model.CrawlingData) (int64, bool, e
 				content,
 				summary,
 				confidence,
-				content_hash
+				llm_output
 			)
 			VALUES (
 				$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
@@ -59,14 +59,14 @@ func (r *Repo) Upsert(ctx context.Context, d model.CrawlingData) (int64, bool, e
 			content = EXCLUDED.content,
 			summary = EXCLUDED.summary,
 			confidence = EXCLUDED.confidence,
-			content_hash = EXCLUDED.content_hash,
+			llm_output = EXCLUDED.llm_output,
 			updated_at = NOW()
 		RETURNING
 			id,
 			(xmax = 0)`,
 		d.CountryID, d.OrganizationID, d.SiteID, d.PageID, d.CategoryID, d.SubcategoryID,
 		d.RecordType, d.Title, d.LanguageCode, d.PublishedAt, d.Content, d.Summary,
-		d.Confidence, d.ContentHash,
+		d.Confidence, nullJSON(d.LLMOutput),
 	).Scan(&id, &created)
 	if err != nil {
 		return 0, false, fmt.Errorf("upsert crawling data for page %d: %w", d.PageID, err)
@@ -78,7 +78,7 @@ func scan(row interface{ Scan(...any) error }) (model.CrawlingData, error) {
 	var d model.CrawlingData
 	err := row.Scan(&d.ID, &d.CountryID, &d.OrganizationID, &d.SiteID, &d.PageID, &d.CategoryID,
 		&d.SubcategoryID, &d.RecordType, &d.Title, &d.LanguageCode, &d.PublishedAt, &d.Content,
-		&d.Summary, &d.Confidence, &d.ContentHash, &d.CreatedAt, &d.UpdatedAt, &d.SourceURL)
+		&d.Summary, &d.Confidence, &d.ContentHash, &d.LLMOutput, &d.CreatedAt, &d.UpdatedAt, &d.SourceURL)
 	return d, err
 }
 
@@ -131,7 +131,8 @@ func (r *Repo) List(ctx context.Context, f model.ListFilter) ([]model.CrawlingDa
 			d.content,
 			d.summary,
 			d.confidence,
-			d.content_hash,
+			p.content_hash,
+			d.llm_output,
 			d.created_at,
 			d.updated_at,
 			p.url
@@ -173,7 +174,8 @@ func (r *Repo) Get(ctx context.Context, id int64) (model.CrawlingData, error) {
 			d.content,
 			d.summary,
 			d.confidence,
-			d.content_hash,
+			p.content_hash,
+			d.llm_output,
 			d.created_at,
 			d.updated_at,
 			p.url
@@ -189,4 +191,13 @@ func (r *Repo) Get(ctx context.Context, id int64) (model.CrawlingData, error) {
 		return d, fmt.Errorf("crawling data %d: %w", id, infrastructure.ErrNotFound)
 	}
 	return d, err
+}
+
+// nullJSON passes a JSON document as text (lib/pq would send []byte as bytea,
+// which a JSONB column rejects), or NULL when there is none.
+func nullJSON(raw []byte) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return string(raw)
 }

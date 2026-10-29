@@ -2,5 +2,5 @@ package resources
 
 import "embed"
 
-//go:embed migrations seed settings
+//go:embed migrations seed settings prompts
 var FS embed.FS

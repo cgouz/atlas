@@ -42,8 +42,10 @@ func Validate(out model.NormalizeOutput, t *model.Taxonomy) (model.Result, error
 		res.CategoryID = category.ID
 	}
 
+	var subcategoryCode *string
 	if out.SubcategoryCode != nil && strings.TrimSpace(*out.SubcategoryCode) != "" {
 		code := strings.TrimSpace(*out.SubcategoryCode)
+		subcategoryCode = &code
 		sub, ok := t.Lookup(code)
 		switch {
 		case !ok:
@@ -88,6 +90,22 @@ func Validate(out model.NormalizeOutput, t *model.Taxonomy) (model.Result, error
 
 	if len(problems) > 0 {
 		return res, &model.ValidationError{Problems: problems}
+	}
+	var publishedAt *string
+	if res.PublishedAt != nil {
+		v := strings.TrimSpace(*out.PublishedAt)
+		publishedAt = &v
+	}
+	res.Output = model.StoredOutput{
+		RecordType:      res.RecordType,
+		CategoryCode:    categoryCode,
+		SubcategoryCode: subcategoryCode,
+		Title:           res.Title,
+		Language:        res.Language,
+		PublishedAt:     publishedAt,
+		Summary:         res.Summary,
+		Keywords:        res.Keywords,
+		Confidence:      res.Confidence,
 	}
 	return res, nil
 }

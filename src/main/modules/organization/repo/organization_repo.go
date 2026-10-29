@@ -99,7 +99,7 @@ func (r *Repo) Get(ctx context.Context, id int64) (model.Organization, error) {
 }
 
 // Update changes the fields set in u and returns the updated organization.
-// For official_name and description, NULL keeps the value and '' clears it.
+// For official_name and description, NULL keeps the value and an empty string clears it.
 func (r *Repo) Update(ctx context.Context, id int64, u model.Update) (model.Organization, error) {
 	o, err := scan(
 		r.db.QueryRowContext(ctx, `

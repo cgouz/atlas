@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"time"
 
 	"github.com/cgouz/atlas/src/main/modules/crawling_data/model"
@@ -31,6 +32,10 @@ type CrawlingDataResponse struct {
 	CrawlingDataSummary
 	Content     string `json:"content"`
 	ContentHash string `json:"content_hash"`
+	// LLMOutput is the model's validated answer: record_type, category_code,
+	// subcategory_code, title, language, published_at, summary, keywords,
+	// confidence. null for rows stored before it was kept.
+	LLMOutput json.RawMessage `json:"llm_output" swaggertype:"object"`
 }
 
 func SummaryFromModel(d model.CrawlingData) CrawlingDataSummary {
@@ -47,5 +52,6 @@ func FromModel(d model.CrawlingData) CrawlingDataResponse {
 		CrawlingDataSummary: SummaryFromModel(d),
 		Content:             d.Content,
 		ContentHash:         hex.EncodeToString(d.ContentHash),
+		LLMOutput:           d.LLMOutput,
 	}
 }

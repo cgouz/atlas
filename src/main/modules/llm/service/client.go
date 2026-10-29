@@ -34,6 +34,8 @@ type ClientConfig struct {
 	APIKey    string
 	Timeout   time.Duration
 	MaxTokens int
+	// SystemPrompt comes from resources/prompts/normalize_system.txt.
+	SystemPrompt string
 }
 
 // NewClient selects the implementation for runtime.
@@ -138,7 +140,7 @@ func (c chatClient) messages(in model.NormalizeInput) ([]chatMessage, error) {
 		return nil, err
 	}
 	return []chatMessage{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: c.cfg.SystemPrompt},
 		{Role: "user", Content: string(user)},
 	}, nil
 }

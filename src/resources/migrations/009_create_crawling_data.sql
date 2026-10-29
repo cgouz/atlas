@@ -13,7 +13,7 @@ CREATE TABLE crawling_data (
     content             TEXT NOT NULL,
     summary             TEXT,
     confidence          FLOAT4,
-    content_hash        BYTEA NOT NULL,
+    llm_output          JSONB,                      -- validated LLM answer (codes, keywords, ...) without content
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ DEFAULT NULL,
 

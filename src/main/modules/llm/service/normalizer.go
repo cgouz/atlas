@@ -15,6 +15,7 @@ import (
 // limit, validation and retries. It is shared by all crawl runs.
 type Normalizer struct {
 	client        Client
+	schema        OutputSchemaTemplate
 	sem           chan struct{}
 	maxRetries    int
 	maxInputChars int
@@ -22,9 +23,10 @@ type Normalizer struct {
 	log           *slog.Logger
 }
 
-func NewNormalizer(client Client, workers, maxRetries, maxInputChars int, log *slog.Logger) *Normalizer {
+func NewNormalizer(client Client, schema OutputSchemaTemplate, workers, maxRetries, maxInputChars int, log *slog.Logger) *Normalizer {
 	return &Normalizer{
 		client:        client,
+		schema:        schema,
 		sem:           make(chan struct{}, workers),
 		maxRetries:    maxRetries,
 		maxInputChars: maxInputChars,
@@ -43,7 +45,7 @@ func (n *Normalizer) Normalize(ctx context.Context, in model.NormalizeInput, t *
 	in.Content = truncateRunes(in.Content, n.maxInputChars)
 	in.Categories = t.Categories
 	in.RecordTypes = t.RecordTypes
-	schema := OutputSchema(t)
+	schema := n.schema.OutputSchema(t)
 
 	select {
 	case n.sem <- struct{}{}:

@@ -90,8 +90,12 @@ func TestSchedulerRunStopsOnCancel(t *testing.T) {
 
 func TestRealResourcesLoad(t *testing.T) {
 	res := os.DirFS("../../resources")
-	if _, err := LoadSettings(res); err != nil {
+	settings, err := LoadSettings(res)
+	if err != nil {
 		t.Fatalf("settings: %v", err)
+	}
+	if !strings.Contains(settings.SystemPrompt, `Use "`+settings.Taxonomy.UnknownCategoryCode+`" if none fits`) {
+		t.Errorf("system prompt must name the unknown category from taxonomy.json:\n%s", settings.SystemPrompt)
 	}
 	d, err := LoadSeed(res)
 	if err != nil {
