@@ -1,14 +1,14 @@
 # Running Atlas on a GPU server (NVIDIA B200)
 
 This guide takes a fresh server from `git clone` to a running crawl:
-Qwen3-8B on llama.cpp on the GPU, PostgreSQL in Docker, and the Atlas API on port 8090.
+Qwen3-8B on llama.cpp on the GPU, PostgreSQL (no Docker), and the Atlas API on port 8090.
 
 ```text
                       ┌───────────────────── GPU server ─────────────────────┐
  official websites ◄──┤ Atlas (Go, :8090) ──► llama-server (:8080) ──► B200  │
                       │        │              Qwen3-8B Q8_0, 16 slots        │
                       │        ▼                                             │
-                      │ PostgreSQL 17 (:5432, Docker)                        │
+                      │ PostgreSQL (:5432, apt or /workspace)                │
                       └──────────────────────────────────────────────────────┘
 ```
 
@@ -52,7 +52,7 @@ To reach Swagger from your laptop: `kubectl port-forward <pod> 8090:8090`, then 
 The script still needs from the pod image: an NVIDIA driver and CUDA toolkit ≥ 12.8 (`nvcc`), `cmake`, `g++`,
 `git`, `curl`, `tar`, `bzip2` and `python3`. It stops with a clear message when one is missing.
 
-The rest of this guide explains each step by hand, for a normal server (with Docker and systemd).
+The rest of this guide explains each step by hand; section 10 (systemd services) only applies to a normal server.
 
 ---
 
@@ -64,7 +64,7 @@ The rest of this guide explains each step by hand, for a normal server (with Doc
 | CUDA toolkit | **12.8 or newer** (needed for Blackwell, `sm_100`) | `nvcc --version` |
 | CMake and a C++ compiler | CMake ≥ 3.24, GCC ≥ 11 | `cmake --version`, `g++ --version` |
 | Go | **1.27.3** or newer (see `go.mod`) | `go version` |
-| Docker | any | `docker ps` |
+| Root (for the default apt PostgreSQL) | or use `PG_MODE=workspace` | `id -u` prints `0` |
 | Hugging Face CLI | any | `huggingface-cli --version` (`pip install -U "huggingface_hub[cli]"`) |
 | Disk | ~10 GB for the model, ~1 GB for the llama.cpp build, plus the database | `df -h .` |
 
@@ -144,27 +144,72 @@ Tuning, if needed:
 |---|---|
 | More parallel pages | `make llama-run LLAMA_SLOTS=32` **and** set `LLM_WORKERS=32` in `llamacpp.env` |
 | Less GPU memory | `make llama-run LLAMA_SLOT_CTX=16384` |
-| Reach it from another machine | `make llama-run LLAMA_HOST=0.0.0.0` (it has no authentication: firewall it) |
+| Reach it from another machine | `LLAMA_API_KEY=<key> make llama-run LLAMA_HOST=0.0.0.0` (see below) |
+
+### llama-server on another machine, with an API key
+
+When the GPU server only runs the model and Atlas runs elsewhere, protect llama-server with a key.
+llama-server reads it from `LLAMA_API_KEY`; then every endpoint except `/health` requires
+`Authorization: Bearer <key>`. Atlas sends exactly that header when `LLM_API_KEY` is set.
+
+```sh
+# a long random key, generated once
+openssl rand -hex 32
+
+# GPU server: serve on all interfaces, key required
+LLAMA_API_KEY=<key> make llama-run LLAMA_HOST=0.0.0.0
+
+# Atlas server: point Atlas at it with the same key (real environment variables override llamacpp.env)
+LLM_BASE_URL=http://<gpu-host>:8080/v1 LLM_API_KEY=<key> make run-llamacpp
+
+# or, in a pod, with the script (it checks the key before starting Atlas, and check/crawl send it)
+LLM_URL=http://<gpu-host>:8080 LLAMA_API_KEY=<key> scripts/pod.sh start
+LLM_URL=http://<gpu-host>:8080 LLAMA_API_KEY=<key> scripts/pod.sh check
+```
+
+Check from the Atlas side:
+
+```sh
+curl -s http://<gpu-host>:8080/health                                            # public: {"status":"ok"}
+curl -s -H "Authorization: Bearer <key>" http://<gpu-host>:8080/v1/models         # lists qwen3-8b-q8_0
+curl -s -o /dev/null -w '%{http_code}\n' http://<gpu-host>:8080/v1/models         # 401 without the key
+```
+
+The key travels in plain HTTP. Keep the traffic inside the cluster or a private network (or put llama-server
+behind a TLS proxy), and do not commit the key: pass it as an environment variable, not in `llamacpp.env`.
 
 ## 6. Start PostgreSQL
 
-In a pod without Docker, use `scripts/pod.sh setup` and `scripts/pod.sh start` instead (see the quick start).
+No Docker needed. The script does it in one step: it installs PostgreSQL if it is missing, starts it and creates
+the `atlas` user and database (UTF8):
 
 ```sh
-docker run -d --name atlas-postgres --restart unless-stopped \
-  -e POSTGRES_DB=atlas -e POSTGRES_USER=atlas -e POSTGRES_PASSWORD=atlas \
-  -p 127.0.0.1:5432:5432 \
-  -v atlas-pgdata:/var/lib/postgresql/data \
-  postgres:17-alpine
+scripts/pod.sh postgres                       # apt-get + "service postgresql start" (needs root)
+PG_MODE=workspace scripts/pod.sh postgres     # or: PostgreSQL 17 in /workspace, kept across pod restarts, no root
+```
 
-docker exec atlas-postgres pg_isready -U atlas -d atlas
+Running it again is safe: it only starts what is not running and creates what is missing.
+
+By hand, the same as the default mode (as root, Debian/Ubuntu):
+
+```sh
+apt-get update && apt-get install -y postgresql
+service postgresql start
+su postgres -c "psql -c \"CREATE USER atlas WITH PASSWORD 'atlas';\" \
+  -c \"CREATE DATABASE atlas OWNER atlas ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;\""
+
+PGPASSWORD=atlas psql -h 127.0.0.1 -U atlas -d atlas -c 'SELECT 1'     # check the login
 ```
 
 The user, password, database and port match `src/resources/env/llamacpp.env`.
-**Change the password** for anything beyond a test server, in both places.
+**Change the password** for anything beyond a test server, in both places (`DB_PASSWORD=... scripts/pod.sh postgres`
+sets it).
 
-If port 5432 is already taken, publish another one (`-p 127.0.0.1:5434:5432`) and set `DB_PORT=5434`
-in `llamacpp.env`.
+If port 5432 is already taken, use another one: `PG_PORT=5434 scripts/pod.sh postgres` and `DB_PORT=5434` in
+`llamacpp.env`.
+
+In apt mode the database lives in the pod's own filesystem (`/var/lib/postgresql`): after a pod restart it is
+gone and `scripts/pod.sh postgres` (or `start`) installs an empty one. Use `PG_MODE=workspace` to keep it.
 
 ## 7. Start Atlas
 
@@ -245,7 +290,7 @@ Limits per site come from `src/resources/settings/crawler.json`: 500 pages per r
 | Crawl progress | `GET /v1/crawl-runs?status=running`, `GET /v1/crawl-batches/<id>` |
 | LLM throughput | `curl -s localhost:8080/metrics` (Prometheus), `GET localhost:8080/slots` |
 | GPU | `watch -n 2 nvidia-smi` |
-| Database | `docker exec -it atlas-postgres psql -U atlas -d atlas` |
+| Database | `PGPASSWORD=atlas psql -h 127.0.0.1 -U atlas -d atlas` |
 
 Useful SQL:
 
@@ -286,7 +331,7 @@ WantedBy=multi-user.target
 ```ini
 [Unit]
 Description=Atlas API and crawler
-After=network.target docker.service llama-server.service
+After=network.target postgresql.service llama-server.service
 Wants=llama-server.service
 
 [Service]
@@ -346,7 +391,7 @@ Edit, then restart Atlas:
 | llama-server: `CUDA error: no kernel image is available` | Built for the wrong GPU: `rm -rf src/third_party/llama.cpp/build && make llama-build CUDA_ARCH=native`. |
 | llama-server: `out of memory` | Lower `LLAMA_SLOT_CTX` or `LLAMA_SLOTS`. |
 | Atlas: `connect: connection refused` on 5432 | PostgreSQL is not running or `DB_PORT` is wrong (section 6). |
-| Atlas: `migration 0xx_...: ...` | The database has an older schema. On a test server, recreate it: `docker rm -f atlas-postgres && docker volume rm atlas-pgdata`, then section 6 again. |
+| Atlas: `migration 0xx_...: ...` | The database has an older schema. On a test server, recreate it: `su postgres -c "psql -c 'DROP DATABASE atlas'"` (workspace mode: `scripts/pod.sh stop && rm -rf /workspace/pgdata`), then `scripts/pod.sh postgres` again. |
 | Pages fail with `llm status ...` or `connection refused` on 8080 | llama-server is not running or still loading the model. |
 | Many pages fail with `llm output was cut off` | Pages are long: raise `LLM_MAX_TOKENS` in `llamacpp.env` (Atlas already retries without `content`). |
 | A site gives almost no pages | It builds its content with JavaScript or blocks crawlers in `robots.txt`; Atlas reads only server-rendered HTML. |
@@ -358,5 +403,5 @@ Edit, then restart Atlas:
 ```sh
 # Ctrl+C in the terminals of make run-llamacpp and make llama-run, or:
 sudo systemctl stop atlas llama-server
-docker stop atlas-postgres          # data stays in the atlas-pgdata volume
+scripts/pod.sh stop                 # Atlas, llama-server and PostgreSQL
 ```

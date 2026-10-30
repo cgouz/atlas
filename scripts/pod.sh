@@ -9,6 +9,7 @@
 #   scripts/pod.sh start            start Postgres, llama-server and Atlas (again after every pod restart)
 #   scripts/pod.sh check            end-to-end checks: database, LLM answer, Atlas API
 #   scripts/pod.sh crawl stat.uz    crawl one site and show what was stored
+#   scripts/pod.sh postgres         only PostgreSQL: install if missing, start, create user/database atlas
 #   scripts/pod.sh status | logs [postgres|llama|atlas] | stop
 #
 # PostgreSQL, two ways (PG_MODE):
@@ -25,6 +26,8 @@
 #   LLAMA_PORT=8080          llama-server port (on 127.0.0.1); Atlas is pointed at it automatically
 #   DB_PASSWORD=atlas        password of the atlas database user
 #   SKIP_LLAMA=1             do not build/start llama-server (use LLM_BASE_URL from the env file or environment)
+#   LLM_URL=http://host:8080 use a llama-server on another machine (implies SKIP_LLAMA; Atlas is pointed at it)
+#   LLAMA_API_KEY=...        API key: the local llama-server requires it, Atlas and the checks send it
 #   HF_TOKEN=...             only if the model download needs it
 set -euo pipefail
 
@@ -47,8 +50,20 @@ MODEL="$ROOT/models/qwen3-8b/Qwen3-8B-Q8_0.gguf"
 LLAMA_SERVER="$ROOT/src/third_party/llama.cpp/build/bin/llama-server"
 LLAMA_PORT="${LLAMA_PORT:-8080}"
 LLAMA_URL="http://127.0.0.1:$LLAMA_PORT"
-# Atlas talks to our llama-server; with SKIP_LLAMA the caller's LLM_BASE_URL (or the env file) is used.
-[ -z "${SKIP_LLAMA:-}" ] && export LLM_BASE_URL="$LLAMA_URL/v1"
+if [ -n "${LLM_URL:-}" ]; then # llama-server runs on another machine
+	SKIP_LLAMA=1
+	LLAMA_URL="${LLM_URL%/}"
+	LLAMA_URL="${LLAMA_URL%/v1}"
+fi
+# Atlas talks to our (or the remote) llama-server; with only SKIP_LLAMA the caller's LLM_BASE_URL (or the env file) is used.
+if [ -z "${SKIP_LLAMA:-}" ] || [ -n "${LLM_URL:-}" ]; then export LLM_BASE_URL="$LLAMA_URL/v1"; fi
+# One key for both sides: llama-server reads LLAMA_API_KEY itself, Atlas sends LLM_API_KEY as a Bearer token.
+LLAMA_API_KEY="${LLAMA_API_KEY:-${LLM_API_KEY:-}}"
+AUTH=()
+if [ -n "$LLAMA_API_KEY" ]; then
+	export LLAMA_API_KEY LLM_API_KEY="$LLAMA_API_KEY"
+	AUTH=(-H "Authorization: Bearer $LLAMA_API_KEY")
+fi
 ATLAS_URL="http://127.0.0.1:8090"
 
 export PATH="$GO_DIR/bin:$PG/bin:$TOOLS/bin:/usr/local/cuda/bin:$PATH"
@@ -81,6 +96,20 @@ wait_for() {
 }
 
 running() { [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
+
+# llama_get PATH: GET from llama-server with the API key, if any.
+llama_get() { curl -sf ${AUTH[@]+"${AUTH[@]}"} "$LLAMA_URL$1"; }
+
+# llama_auth_ok: the API key (or no key) is accepted; /health is public, /v1/models is not.
+llama_auth_ok() {
+	local code
+	code=$(curl -s -o /dev/null -w '%{http_code}' ${AUTH[@]+"${AUTH[@]}"} "$LLAMA_URL/v1/models")
+	case $code in
+	200) return 0 ;;
+	401) fail "llama-server at $LLAMA_URL rejects the request: $([ -n "$LLAMA_API_KEY" ] && echo "wrong LLAMA_API_KEY" || echo "it needs an API key, set LLAMA_API_KEY")" ;;
+	*) fail "llama-server at $LLAMA_URL answered $code on /v1/models" ;;
+	esac
+}
 
 # port_busy PORT: something already listens on 127.0.0.1:PORT.
 port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -127,11 +156,13 @@ setup_tools() {
 		have git || fail "git is missing"
 	fi
 
-	if ! have go; then
-		say "Installing Go $GO_VERSION into $GO_DIR"
-		curl -fsSL "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz" | tar -xz -C "$WORKSPACE"
+	if [ -z "${PG_ONLY:-}" ]; then
+		if ! have go; then
+			say "Installing Go $GO_VERSION into $GO_DIR"
+			curl -fsSL "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz" | tar -xz -C "$WORKSPACE"
+		fi
+		ok "$(go version)"
 	fi
-	ok "$(go version)"
 
 	# micromamba: the Hugging Face CLI (for the model) and, in workspace mode, PostgreSQL.
 	local need_tools="" need_pg=""
@@ -264,7 +295,7 @@ start_all() {
 		[ -x "$LLAMA_SERVER" ] && [ -f "$MODEL" ] || fail "llama-server or the model is missing: run scripts/pod.sh setup"
 		if running llama; then
 			ok "llama already running (pid $(cat "$RUN/llama.pid"))"
-		elif curl -sf "$LLAMA_URL/health" >/dev/null && curl -sf "$LLAMA_URL/v1/models" | grep -q qwen3-8b-q8_0; then
+		elif curl -sf "$LLAMA_URL/health" >/dev/null && llama_get /v1/models | grep -q qwen3-8b-q8_0; then
 			ok "a llama-server with qwen3-8b-q8_0 already answers on port $LLAMA_PORT (started outside this script); using it"
 		elif port_busy "$LLAMA_PORT"; then
 			fail "port $LLAMA_PORT is taken by another program; pick a free one: LLAMA_PORT=8081 scripts/pod.sh start"
@@ -272,6 +303,12 @@ start_all() {
 			start_bg llama make llama-run LLAMA_PORT="$LLAMA_PORT"
 		fi
 		wait_for "$LLAMA_URL/health" 600 "llama (model loading)"
+		llama_auth_ok
+	elif [ -n "${LLM_URL:-}" ]; then
+		say "Using the llama-server at $LLAMA_URL"
+		wait_for "$LLAMA_URL/health" 60 "llama"
+		llama_auth_ok
+		ok "API key $([ -n "$LLAMA_API_KEY" ] && echo accepted || echo "not needed")"
 	fi
 
 	say "Building and starting Atlas"
@@ -305,11 +342,13 @@ check() {
 		"SELECT string_agg(version::text, ',' ORDER BY version) FROM schema_migrations")
 	ok "migrations applied: $tables"
 
-	if [ -z "${SKIP_LLAMA:-}" ]; then
-		say "LLM (a real answer from the GPU)"
-		curl -sf "$LLAMA_URL/health" >/dev/null || fail "llama-server is not up"
+	if [ -z "${SKIP_LLAMA:-}" ] || [ -n "${LLM_URL:-}" ]; then
+		say "LLM at $LLAMA_URL (a real answer from the GPU)"
+		curl -sf "$LLAMA_URL/health" >/dev/null || fail "llama-server is not up at $LLAMA_URL"
+		llama_auth_ok
+		ok "API key $([ -n "$LLAMA_API_KEY" ] && echo accepted || echo "not needed")"
 		local reply
-		reply=$(curl -sf "$LLAMA_URL/v1/chat/completions" -H 'Content-Type: application/json' -d '{
+		reply=$(curl -sf ${AUTH[@]+"${AUTH[@]}"} "$LLAMA_URL/v1/chat/completions" -H 'Content-Type: application/json' -d '{
 			"model": "qwen3-8b-q8_0", "temperature": 0, "max_tokens": 20,
 			"chat_template_kwargs": {"enable_thinking": false},
 			"messages": [{"role": "user", "content": "Reply with exactly: OK"}]}' |
@@ -372,10 +411,14 @@ logs() {
 case "${1:-}" in
 setup)  setup_tools; say "PostgreSQL ($PG_MODE mode)"; pg_setup; setup_llama; echo; ok "setup done. Next: scripts/pod.sh start" ;;
 start)  start_all ;;
+postgres)
+	say "PostgreSQL ($PG_MODE mode)"
+	if [ "$PG_MODE" = workspace ] && [ ! -f "$PGDATA/PG_VERSION" ]; then PG_ONLY=1 SKIP_LLAMA=1 setup_tools; pg_setup; else pg_start; fi
+	ok "connect with: PGPASSWORD=$DB_PASSWORD psql -h 127.0.0.1 -p $PG_PORT -U atlas -d atlas" ;;
 stop)   stop_all ;;
 status) status ;;
 check)  check ;;
 crawl)  shift; crawl "$@" ;;
 logs)   shift; logs "$@" ;;
-*)      sed -n '2,20p' "$0"; exit 1 ;;
+*)      awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 1 ;;
 esac

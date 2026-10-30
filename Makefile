@@ -43,7 +43,10 @@ llama-build:
 		-DCMAKE_CUDA_ARCHITECTURES=$(CUDA_ARCH)
 	cmake --build $(LLAMA_DIR)/build --config Release -j --target llama-server
 
-# Serve the model on the GPU:
+# Serve the model on the GPU. To require an API key, set it in the environment
+# (llama-server reads LLAMA_API_KEY itself, so the key does not show up in `ps`):
+#   LLAMA_API_KEY=<key> make llama-run LLAMA_HOST=0.0.0.0   # reachable from other machines, key required
+# and give Atlas the same key as LLM_API_KEY. /health stays public.
 #   -ngl 999            every layer on the GPU
 #   -fa on              flash attention
 #   -np / -c / -kvu     LLAMA_SLOTS parallel slots sharing one KV cache of LLAMA_CTX tokens,
