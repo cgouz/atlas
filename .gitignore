@@ -73,3 +73,6 @@ Testing/
 models/**
 !models/**/
 !models/**/.gitkeep
+
+# Atlas binary built by scripts/pod.sh
+bin/

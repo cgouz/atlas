@@ -16,6 +16,36 @@ Every command below is run from the repository root unless it says otherwise.
 
 ---
 
+## Quick start in a Kubernetes pod
+
+A pod usually has no Docker and no systemd, and only `/workspace` survives a restart.
+[`scripts/pod.sh`](../scripts/pod.sh) does everything for that case: it installs PostgreSQL 17 (via micromamba),
+Go and the Hugging Face CLI **into `/workspace`**, runs Postgres as a non-root user (it refuses to run as root),
+builds llama.cpp, downloads the model and starts all three processes in the background.
+
+```sh
+git clone --recurse-submodules git@github.com:cgouz/atlas.git && cd atlas
+
+scripts/pod.sh setup          # once: Postgres, Go, llama.cpp build, model download
+scripts/pod.sh start          # Postgres + llama-server + Atlas; run again after every pod restart
+scripts/pod.sh check          # database, a real answer from the GPU, every API list endpoint
+scripts/pod.sh crawl stat.uz  # crawl one site and show what was stored
+```
+
+Also: `scripts/pod.sh status`, `scripts/pod.sh logs atlas|llama|postgres`, `scripts/pod.sh stop`.
+Data and logs live in `/workspace/pgdata` and `/workspace/atlas-run`. Settings are at the top of the script
+(`WORKSPACE`, `PG_PORT`, `DB_PASSWORD`, `SKIP_LLAMA`, `HF_TOKEN`).
+
+To reach Swagger from your laptop: `kubectl port-forward <pod> 8090:8090`, then open
+`http://localhost:8090/swagger/index.html`.
+
+The script still needs from the pod image: an NVIDIA driver and CUDA toolkit ≥ 12.8 (`nvcc`), `cmake`, `g++`,
+`git`, `curl`, `tar`, `bzip2` and `python3`. It stops with a clear message when one is missing.
+
+The rest of this guide explains each step by hand, for a normal server (with Docker and systemd).
+
+---
+
 ## 1. Requirements
 
 | What | Version | Check |
@@ -107,6 +137,8 @@ Tuning, if needed:
 | Reach it from another machine | `make llama-run LLAMA_HOST=0.0.0.0` (it has no authentication: firewall it) |
 
 ## 6. Start PostgreSQL
+
+In a pod without Docker, use `scripts/pod.sh setup` and `scripts/pod.sh start` instead (see the quick start).
 
 ```sh
 docker run -d --name atlas-postgres --restart unless-stopped \
