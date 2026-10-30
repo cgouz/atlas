@@ -14,6 +14,7 @@
 # Settings (environment variables):
 #   WORKSPACE=/workspace     where tools, data and logs go
 #   PG_PORT=5432             Postgres port (on 127.0.0.1)
+#   LLAMA_PORT=8080          llama-server port (on 127.0.0.1); Atlas is pointed at it automatically
 #   DB_PASSWORD=atlas        password of the atlas database user
 #   SKIP_LLAMA=1             do not build/start llama-server (use LLM_BASE_URL from the env file or environment)
 #   HF_TOKEN=...             only if the model download needs it
@@ -34,7 +35,10 @@ export DB_PORT="$PG_PORT"
 ENV_FILE="$ROOT/src/resources/env/llamacpp.env"
 MODEL="$ROOT/models/qwen3-8b/Qwen3-8B-Q8_0.gguf"
 LLAMA_SERVER="$ROOT/src/third_party/llama.cpp/build/bin/llama-server"
-LLAMA_URL="http://127.0.0.1:8080"
+LLAMA_PORT="${LLAMA_PORT:-8080}"
+LLAMA_URL="http://127.0.0.1:$LLAMA_PORT"
+# Atlas talks to our llama-server; with SKIP_LLAMA the caller's LLM_BASE_URL (or the env file) is used.
+[ -z "${SKIP_LLAMA:-}" ] && export LLM_BASE_URL="$LLAMA_URL/v1"
 ATLAS_URL="http://127.0.0.1:8090"
 
 export PATH="$GO_DIR/bin:$PG/bin:/usr/local/cuda/bin:$PATH"
@@ -66,6 +70,9 @@ wait_for() {
 }
 
 running() { [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
+
+# port_busy PORT: something already listens on 127.0.0.1:PORT.
+port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 
 # start_bg NAME CMD...: runs CMD in its own process group so stop can end it with its children.
 start_bg() {
@@ -170,7 +177,15 @@ start_all() {
 	if [ -z "${SKIP_LLAMA:-}" ]; then
 		say "Starting llama-server"
 		[ -x "$LLAMA_SERVER" ] && [ -f "$MODEL" ] || fail "llama-server or the model is missing: run scripts/pod.sh setup"
-		start_bg llama make llama-run
+		if running llama; then
+			ok "llama already running (pid $(cat "$RUN/llama.pid"))"
+		elif curl -sf "$LLAMA_URL/health" >/dev/null && curl -sf "$LLAMA_URL/v1/models" | grep -q qwen3-8b-q8_0; then
+			ok "a llama-server with qwen3-8b-q8_0 already answers on port $LLAMA_PORT (started outside this script); using it"
+		elif port_busy "$LLAMA_PORT"; then
+			fail "port $LLAMA_PORT is taken by another program; pick a free one: LLAMA_PORT=8081 scripts/pod.sh start"
+		else
+			start_bg llama make llama-run LLAMA_PORT="$LLAMA_PORT"
+		fi
 		wait_for "$LLAMA_URL/health" 600 "llama (model loading)"
 	fi
 

@@ -1,4 +1,5 @@
-SWAG := $(shell go env GOPATH)/bin/swag
+# Lazy (=): only `make swagger` needs Go, so other targets work where go is not on PATH.
+SWAG = $(shell go env GOPATH)/bin/swag
 
 # llama.cpp, tuned for one NVIDIA B200 (Blackwell, compute capability 10.0, 180 GB).
 LLAMA_DIR    := src/third_party/llama.cpp
