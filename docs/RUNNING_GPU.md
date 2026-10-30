@@ -19,9 +19,18 @@ Every command below is run from the repository root unless it says otherwise.
 ## Quick start in a Kubernetes pod
 
 A pod usually has no Docker and no systemd, and only `/workspace` survives a restart.
-[`scripts/pod.sh`](../scripts/pod.sh) does everything for that case: it installs PostgreSQL 17 (via micromamba),
-Go and the Hugging Face CLI **into `/workspace`**, runs Postgres as a non-root user (it refuses to run as root),
-builds llama.cpp, downloads the model and starts all three processes in the background.
+[`scripts/pod.sh`](../scripts/pod.sh) does everything for that case: it installs PostgreSQL (no Docker),
+Go and the Hugging Face CLI, builds llama.cpp, downloads the model and starts all three processes in the background.
+
+PostgreSQL comes in two ways, chosen with `PG_MODE`:
+
+| `PG_MODE` | How | After a pod restart |
+|---|---|---|
+| `apt` (default) | `apt-get install postgresql` and `service postgresql start`, as root | `scripts/pod.sh start` installs it again; **the database is empty** (crawl again) |
+| `workspace` | PostgreSQL 17 via micromamba in `/workspace/pg`, data in `/workspace/pgdata`, also without root | everything is kept |
+
+For a test run `apt` is enough; to keep crawled data across restarts, use `PG_MODE=workspace` for every command
+(`export PG_MODE=workspace`).
 
 ```sh
 git clone --recurse-submodules git@github.com:cgouz/atlas.git && cd atlas
@@ -33,8 +42,9 @@ scripts/pod.sh crawl stat.uz  # crawl one site and show what was stored
 ```
 
 Also: `scripts/pod.sh status`, `scripts/pod.sh logs atlas|llama|postgres`, `scripts/pod.sh stop`.
-Data and logs live in `/workspace/pgdata` and `/workspace/atlas-run`. Settings are at the top of the script
-(`WORKSPACE`, `PG_PORT`, `DB_PASSWORD`, `SKIP_LLAMA`, `HF_TOKEN`).
+Logs and pid files live in `/workspace/atlas-run`. Settings are at the top of the script
+(`PG_MODE`, `WORKSPACE`, `PG_PORT`, `LLAMA_PORT`, `DB_PASSWORD`, `SKIP_LLAMA`, `HF_TOKEN`).
+If port 8080 is taken in the pod, run with `LLAMA_PORT=8081`; Atlas is pointed at it automatically.
 
 To reach Swagger from your laptop: `kubectl port-forward <pod> 8090:8090`, then open
 `http://localhost:8090/swagger/index.html`.

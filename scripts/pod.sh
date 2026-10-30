@@ -2,8 +2,8 @@
 # Sets up and runs the whole Atlas stack inside a Kubernetes GPU pod (no Docker,
 # no systemd): PostgreSQL, llama-server (Qwen3-8B on the GPU) and Atlas.
 #
-# Everything that must survive a pod restart lives under $WORKSPACE
-# (default /workspace): the Postgres install and data, Go, logs and pid files.
+# Go, the model tools, logs and pid files live under $WORKSPACE (default
+# /workspace), which survives a pod restart.
 #
 #   scripts/pod.sh setup            one time: install Postgres, Go, build llama.cpp, download the model
 #   scripts/pod.sh start            start Postgres, llama-server and Atlas (again after every pod restart)
@@ -11,8 +11,16 @@
 #   scripts/pod.sh crawl stat.uz    crawl one site and show what was stored
 #   scripts/pod.sh status | logs [postgres|llama|atlas] | stop
 #
+# PostgreSQL, two ways (PG_MODE):
+#   apt        (default) apt-get install postgresql + "service postgresql start", run as root.
+#              Lives in the pod's own filesystem: after a pod restart, start installs it
+#              again and the database is empty (crawl again).
+#   workspace  PostgreSQL 17 installed with micromamba into $WORKSPACE/pg, data in
+#              $WORKSPACE/pgdata: survives pod restarts, works without root.
+#
 # Settings (environment variables):
-#   WORKSPACE=/workspace     where tools, data and logs go
+#   PG_MODE=apt              apt or workspace (see above)
+#   WORKSPACE=/workspace     where tools, logs (and in workspace mode the database) go
 #   PG_PORT=5432             Postgres port (on 127.0.0.1)
 #   LLAMA_PORT=8080          llama-server port (on 127.0.0.1); Atlas is pointed at it automatically
 #   DB_PASSWORD=atlas        password of the atlas database user
@@ -23,8 +31,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="${WORKSPACE:-/workspace}"
 RUN="$WORKSPACE/atlas-run"           # pids and logs
-PG="$WORKSPACE/pg"                   # Postgres install (micromamba env)
-PGDATA="$WORKSPACE/pgdata"
+PG_MODE="${PG_MODE:-apt}"
+PG="$WORKSPACE/pg"                   # workspace mode: Postgres install (micromamba env)
+PGDATA="$WORKSPACE/pgdata"           # workspace mode: database files
+TOOLS="$WORKSPACE/tools"             # micromamba env with the Hugging Face CLI
 MAMBA="$WORKSPACE/bin/micromamba"
 GO_DIR="$WORKSPACE/go"
 GO_VERSION="1.27.3"
@@ -41,8 +51,9 @@ LLAMA_URL="http://127.0.0.1:$LLAMA_PORT"
 [ -z "${SKIP_LLAMA:-}" ] && export LLM_BASE_URL="$LLAMA_URL/v1"
 ATLAS_URL="http://127.0.0.1:8090"
 
-export PATH="$GO_DIR/bin:$PG/bin:/usr/local/cuda/bin:$PATH"
+export PATH="$GO_DIR/bin:$PG/bin:$TOOLS/bin:/usr/local/cuda/bin:$PATH"
 mkdir -p "$RUN"
+case $PG_MODE in apt | workspace) ;; *) echo "PG_MODE must be apt or workspace" >&2; exit 1 ;; esac
 
 say()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ok\033[0m %s\n' "$*"; }
@@ -78,15 +89,24 @@ port_busy() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 start_bg() {
 	local name=$1; shift
 	if running "$name"; then ok "$name already running (pid $(cat "$RUN/$name.pid"))"; return; fi
-	(cd "$ROOT" && setsid nohup "$@" >"$RUN/$name.log" 2>&1 & echo $! >"$RUN/$name.pid")
+	# The child writes its own pid before exec: setsid may fork, so $! is not always the process.
+	rm -f "$RUN/$name.pid"
+	(cd "$ROOT" && setsid nohup sh -c 'echo $$ >"$0"; exec "$@"' "$RUN/$name.pid" "$@" >"$RUN/$name.log" 2>&1 &)
+	for _ in $(seq 50); do [ -s "$RUN/$name.pid" ] && break; sleep 0.1; done
 	ok "$name started (pid $(cat "$RUN/$name.pid"), log $RUN/$name.log)"
 }
 
 stop_bg() {
-	local name=$1
+	local name=$1 pid
 	if running "$name"; then
-		kill -TERM -- "-$(cat "$RUN/$name.pid")" 2>/dev/null || true
+		pid=$(cat "$RUN/$name.pid")
+		kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
 		for _ in $(seq 30); do running "$name" || break; sleep 1; done
+		if running "$name"; then
+			kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+			sleep 1
+		fi
+		running "$name" && fail "$name (pid $pid) does not stop"
 		ok "$name stopped"
 	fi
 	rm -f "$RUN/$name.pid"
@@ -97,7 +117,7 @@ stop_bg() {
 setup_tools() {
 	say "Checking tools"
 	have curl || fail "curl is missing (apt-get install -y curl)"
-	have tar && have bzip2 || fail "tar/bzip2 are missing (apt-get install -y tar bzip2)"
+	have tar || fail "tar is missing (apt-get install -y tar)"
 	if [ -z "${SKIP_LLAMA:-}" ]; then
 		have nvidia-smi || fail "nvidia-smi not found: is this a GPU pod?"
 		nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | sed 's/^/     GPU: /'
@@ -113,19 +133,78 @@ setup_tools() {
 	fi
 	ok "$(go version)"
 
-	if [ ! -x "$MAMBA" ]; then
+	# micromamba: the Hugging Face CLI (for the model) and, in workspace mode, PostgreSQL.
+	local need_tools="" need_pg=""
+	[ -z "${SKIP_LLAMA:-}" ] && [ ! -x "$TOOLS/bin/hf" ] && [ ! -x "$TOOLS/bin/huggingface-cli" ] && need_tools=1
+	[ "$PG_MODE" = workspace ] && [ ! -x "$PG/bin/postgres" ] && need_pg=1
+	if [ -n "$need_tools$need_pg" ] && [ ! -x "$MAMBA" ]; then
+		have bzip2 || fail "bzip2 is missing (apt-get install -y bzip2)"
 		say "Installing micromamba into $WORKSPACE/bin"
 		mkdir -p "$WORKSPACE/bin"
 		curl -fsSL https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xj -C "$WORKSPACE" bin/micromamba
 	fi
-	if [ ! -x "$PG/bin/postgres" ]; then
-		say "Installing PostgreSQL 17 and the Hugging Face CLI into $PG"
-		"$MAMBA" create -y -q -r "$WORKSPACE/mamba" -p "$PG" -c conda-forge "postgresql=17" huggingface_hub
+	if [ -n "$need_tools" ]; then
+		say "Installing the Hugging Face CLI into $TOOLS"
+		"$MAMBA" create -y -q -r "$WORKSPACE/mamba" -p "$TOOLS" -c conda-forge huggingface_hub
 	fi
-	ok "$("$PG/bin/postgres" --version)"
+	if [ -n "$need_pg" ]; then
+		say "Installing PostgreSQL 17 into $PG"
+		"$MAMBA" create -y -q -r "$WORKSPACE/mamba" -p "$PG" -c conda-forge "postgresql=17"
+	fi
 }
 
-setup_postgres() {
+# ---------------------------------------------------------------- PostgreSQL
+# pg_setup / pg_start / pg_stop / pg_running / pg_log pick the PG_MODE implementation.
+
+pg_setup()   { "pg_${PG_MODE}_setup"; }
+pg_start()   { "pg_${PG_MODE}_start"; }
+pg_stop()    { "pg_${PG_MODE}_stop"; }
+pg_running() { "pg_${PG_MODE}_running"; }
+pg_log()     { "pg_${PG_MODE}_log"; }
+
+# --- apt mode: the distribution's PostgreSQL, started with "service".
+
+pg_apt_installed() { compgen -G "/usr/lib/postgresql/*/bin/postgres" >/dev/null; }
+
+pg_apt_setup() { pg_apt_start; }
+
+pg_apt_start() {
+	[ "$(id -u)" = 0 ] || fail "PG_MODE=apt needs root (apt-get, service); use PG_MODE=workspace"
+	if ! pg_apt_installed; then
+		say "Installing PostgreSQL with apt-get (lost on pod restart; start installs it again)"
+		apt-get update -qq
+		DEBIAN_FRONTEND=noninteractive apt-get install -y -qq postgresql >/dev/null
+		# Same port as Atlas expects (the cluster is created on install with port 5432).
+		sed -i "s/^#\?port = [0-9]*/port = $PG_PORT/" /etc/postgresql/*/main/postgresql.conf
+	fi
+	if pg_apt_running; then ok "postgres already running"; else
+		service postgresql start >/dev/null
+		for _ in $(seq 30); do pg_apt_running && break; sleep 1; done
+		pg_apt_running || fail "postgres did not start; see: scripts/pod.sh logs postgres"
+		ok "postgres started on 127.0.0.1:$PG_PORT ($(su postgres -c "psql -p $PG_PORT -tAc 'SHOW server_version'"))"
+	fi
+	# User and database, created once; the password is set every time so it follows DB_PASSWORD.
+	# UTF8 + C locale explicitly: an image without locales would otherwise give SQL_ASCII,
+	# which mangles Uzbek, Russian and Japanese text.
+	local pw=${DB_PASSWORD//\'/\'\'}
+	su postgres -c "psql -p $PG_PORT -v ON_ERROR_STOP=1 -q" <<SQL
+DO \$\$ BEGIN
+	IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'atlas') THEN CREATE ROLE atlas LOGIN; END IF;
+END \$\$;
+ALTER ROLE atlas PASSWORD '$pw';
+SELECT 'CREATE DATABASE atlas OWNER atlas ENCODING ''UTF8'' LC_COLLATE ''C'' LC_CTYPE ''C'' TEMPLATE template0'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'atlas')\gexec
+SQL
+	ok "database atlas ready (user atlas, $(su postgres -c "psql -p $PG_PORT -tAc \"SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname = 'atlas'\""))"
+}
+
+pg_apt_stop()    { pg_apt_running && service postgresql stop >/dev/null && ok "postgres stopped" || true; }
+pg_apt_running() { pg_apt_installed && pg_isready -q -h 127.0.0.1 -p "$PG_PORT"; }
+pg_apt_log()     { tail -n 100 -f /var/log/postgresql/*.log; }
+
+# --- workspace mode: PostgreSQL 17 from micromamba, data in $WORKSPACE/pgdata.
+
+pg_workspace_setup() {
 	if [ -f "$PGDATA/PG_VERSION" ]; then ok "database cluster exists ($PGDATA)"; return; fi
 	say "Creating the database cluster in $PGDATA"
 	mkdir -p "$PGDATA"
@@ -136,10 +215,27 @@ setup_postgres() {
 	# would be SQL_ASCII, which mangles Uzbek, Russian and Japanese text.
 	as_pg "initdb -D '$PGDATA' -U atlas --pwfile='$pw' --auth-local=trust --auth-host=scram-sha-256 -E UTF8 --locale=C >/dev/null"
 	rm -f "$pw"
-	start_postgres
+	pg_workspace_start
 	as_pg "createdb -h /tmp -p $PG_PORT -U atlas atlas"
 	ok "database atlas created (user atlas)"
 }
+
+pg_workspace_start() {
+	[ -f "$PGDATA/PG_VERSION" ] || fail "not set up yet: run scripts/pod.sh setup"
+	if pg_workspace_running; then ok "postgres already running"; return; fi
+	touch "$RUN/postgres.log"
+	[ "$(id -u)" = 0 ] && chown pg "$RUN/postgres.log" # postgres runs as pg and writes its own log
+	# mmap: pods often have only 64 MB of /dev/shm.
+	as_pg "pg_ctl -D '$PGDATA' -l '$RUN/postgres.log' -w \
+		-o \"-c listen_addresses=127.0.0.1 -c port=$PG_PORT -c unix_socket_directories=/tmp -c dynamic_shared_memory_type=mmap\" start" >/dev/null
+	ok "postgres started on 127.0.0.1:$PG_PORT (log $RUN/postgres.log)"
+}
+
+pg_workspace_stop() {
+	pg_workspace_running && as_pg "pg_ctl -D '$PGDATA' -m fast stop" >/dev/null && ok "postgres stopped" || true
+}
+pg_workspace_running() { [ -f "$PGDATA/PG_VERSION" ] && as_pg "pg_ctl -D '$PGDATA' status" >/dev/null 2>&1; }
+pg_workspace_log()     { tail -n 100 -f "$RUN/postgres.log"; }
 
 setup_llama() {
 	[ -n "${SKIP_LLAMA:-}" ] && return
@@ -159,20 +255,9 @@ setup_llama() {
 
 # ---------------------------------------------------------------- start / stop
 
-start_postgres() {
-	if as_pg "pg_ctl -D '$PGDATA' status" >/dev/null 2>&1; then ok "postgres already running"; return; fi
-	touch "$RUN/postgres.log"
-	[ "$(id -u)" = 0 ] && chown pg "$RUN/postgres.log" # postgres runs as pg and writes its own log
-	# mmap: pods often have only 64 MB of /dev/shm.
-	as_pg "pg_ctl -D '$PGDATA' -l '$RUN/postgres.log' -w \
-		-o \"-c listen_addresses=127.0.0.1 -c port=$PG_PORT -c unix_socket_directories=/tmp -c dynamic_shared_memory_type=mmap\" start" >/dev/null
-	ok "postgres started on 127.0.0.1:$PG_PORT (log $RUN/postgres.log)"
-}
-
 start_all() {
-	[ -f "$PGDATA/PG_VERSION" ] || fail "not set up yet: run scripts/pod.sh setup"
-	say "Starting PostgreSQL"
-	start_postgres
+	say "Starting PostgreSQL ($PG_MODE mode)"
+	pg_start
 
 	if [ -z "${SKIP_LLAMA:-}" ]; then
 		say "Starting llama-server"
@@ -201,13 +286,11 @@ stop_all() {
 	say "Stopping"
 	stop_bg atlas
 	stop_bg llama
-	if as_pg "pg_ctl -D '$PGDATA' status" >/dev/null 2>&1; then
-		as_pg "pg_ctl -D '$PGDATA' -m fast stop" >/dev/null && ok "postgres stopped"
-	fi
+	pg_stop
 }
 
 status() {
-	as_pg "pg_ctl -D '$PGDATA' status" >/dev/null 2>&1 && ok "postgres running" || echo "  -  postgres stopped"
+	pg_running && ok "postgres running ($PG_MODE mode)" || echo "  -  postgres stopped ($PG_MODE mode)"
 	for n in llama atlas; do running "$n" && ok "$n running (pid $(cat "$RUN/$n.pid"))" || echo "  -  $n stopped"; done
 }
 
@@ -283,11 +366,11 @@ for d in items:
 
 logs() {
 	local name=${1:-atlas}
-	tail -n 100 -f "$RUN/$name.log"
+	if [ "$name" = postgres ]; then pg_log; else tail -n 100 -f "$RUN/$name.log"; fi
 }
 
 case "${1:-}" in
-setup)  setup_tools; setup_postgres; setup_llama; echo; ok "setup done. Next: scripts/pod.sh start" ;;
+setup)  setup_tools; say "PostgreSQL ($PG_MODE mode)"; pg_setup; setup_llama; echo; ok "setup done. Next: scripts/pod.sh start" ;;
 start)  start_all ;;
 stop)   stop_all ;;
 status) status ;;
